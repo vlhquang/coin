@@ -31,12 +31,16 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
     await authSDK.setPersistence(auth, authSDK.browserLocalPersistence);
     let started = false, writeQueue = Promise.resolve(), saveTimer = null;
     let store = null, accountRef = null, failed = false;
-    const serverURL = window.BTC_SERVER_URL?.replace(/\/$/, '');
+    const serverURL = null;
     let serverWorker = null;
     let lastServerResponse = null;
     setInterval(() => {
       const panel = el('bot-diagnostics');
       if (!panel) return;
+      if (!serverURL) {
+        panel.textContent = 'Bot chạy trong trình duyệt · Giá và nến lấy trực tiếp từ Binance · Dữ liệu riêng lưu trên Firebase. Đóng trang hoặc máy ngủ sẽ ngừng xử lý. Chỉ chạy bot trên một tab/thiết bị.';
+        return;
+      }
       const heartbeat = serverWorker?.lastTickAt;
       panel.textContent = [
         'Server: ' + (serverURL || 'Chạy trên trình duyệt'),
@@ -80,9 +84,10 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
       const state = { ...store };
       el('sync-status').textContent = 'Đang lưu…';
       writeQueue = writeQueue.then(async () => {
-        await dbSDK.setDoc(accountRef, { state, updatedAt: dbSDK.serverTimestamp() });
+        await dbSDK.setDoc(accountRef, { state, serverManaged: false, updatedAt: dbSDK.serverTimestamp() });
         el('sync-status').textContent = 'Đã lưu';
-      }).catch(() => {
+      }).catch(error => {
+        window.coinDiagnostic('Firestore', 'Lưu thất bại: ' + (error.code || 'unknown'), 'error');
         failed = true; el('sync-status').textContent = 'Lưu thất bại';
         window.dispatchEvent(new Event('coin-storage-error'));
       });
@@ -130,9 +135,18 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
             }
           };
         } else {
-          const snapshot = await dbSDK.getDocFromServer(accountRef);
-          store = snapshot.exists() ? snapshot.data().state || {} : {};
-          if (snapshot.data()?.serverManaged) throw new Error('Tài khoản đã chuyển sang bot server. Cần cấu hình BTC_SERVER_URL.');
+          store = await dbSDK.runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(accountRef);
+            const data = snapshot.exists() ? snapshot.data() : {};
+            const state = { ...(data.state || {}) };
+            if (data.serverManaged) {
+              const key = 'btc-monitor-session-v1';
+              const session = JSON.parse(state[key] || '{}');
+              state[key] = JSON.stringify({ ...session, enabled: false });
+              transaction.set(accountRef, { state, serverManaged: false, updatedAt: dbSDK.serverTimestamp() });
+            }
+            return state;
+          });
         }
         window.coinRuntimeKey = 'btc-monitor-runtime-' + user.uid;
         window.coinStore = {
@@ -178,7 +192,10 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
         el('account-name').textContent = user.email || user.displayName;
         el('sync-status').textContent = 'Đã tải dữ liệu'; el('account-bar').hidden = false;
         document.body.append(script);
-      } catch (error) { el('auth-message').textContent = error.message || 'Không đọc được dữ liệu tài khoản. Kiểm tra Firestore và quyền truy cập.'; }
+      } catch (error) {
+        window.coinDiagnostic('Firestore', error.code || 'Không tải được dữ liệu', 'error');
+        el('auth-message').textContent = 'Không đọc/chuyển được dữ liệu tài khoản. Hãy Publish firestore.rules mới trong Firebase rồi tải lại trang.';
+      }
     });
   } catch { el('auth-message').textContent = 'Không tải được dịch vụ đăng nhập. Kiểm tra kết nối rồi tải lại trang.'; }
 }

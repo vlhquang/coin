@@ -10,7 +10,6 @@ service cloud.firestore {
         && !request.resource.data.get('serverManaged', false);
       allow update: if request.auth != null && request.auth.uid == userId
         && request.auth.token.firebase.sign_in_provider == 'google.com'
-        && !resource.data.get('serverManaged', false)
         && !request.resource.data.get('serverManaged', false);
     }
   }

@@ -8,4 +8,3 @@ window.FIREBASE_CONFIG = {
   appId: "1:765973550784:web:40c4a4464652d8f0ed3f25",
   measurementId: "G-Q61QTS44V6"
 };
-window.BTC_SERVER_URL = "https://vlhquang.onrender.com";

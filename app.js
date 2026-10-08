@@ -205,6 +205,10 @@ function renderConnection() {
   if (autoEnabled && rule) renderAppliedConfig();
   el('active-strategy').textContent = rule ? (autoEnabled ? 'Đang chạy: ' : 'Đã áp dụng · đang tắt: ') + (strategies[rule.mode]?.name || rule.mode) : 'Chưa áp dụng chiến lược';
   el('auto-status').textContent = !autoEnabled ? 'Tự động đang tắt.' : !executionFresh ? window.coinServer ? 'Chưa nhận heartbeat server mới. Kiểm tra Render và kết nối.' : 'Tạm chờ giá mới và kết nối.' : autoQuantity > 0 ? 'Đang giữ ' + autoQuantity.toFixed(8) + ' BTC · Chốt lời: ' + money(entryPrice * (1 + rule.takeProfit / 100)) + ' · Cắt lỗ: ' + money(entryPrice * (1 - rule.stopLoss / 100)) + ' USDT.' : 'Đang chạy · chờ tín hiệu mua.';
+  if (autoEnabled && window.coinServer?.worker?.status === 'market-paused') {
+    el('bot-state').textContent = 'Tạm dừng nguồn giá';
+    el('auto-status').textContent = 'Binance giới hạn/chặn IP server (HTTP ' + window.coinServer.worker.httpStatus + '). Không thực hiện mua/bán. Thử lại sau: ' + new Date(window.coinServer.worker.retryAt).toLocaleString('vi-VN');
+  }
   renderStrategyMonitor();
 }
 function renderAppliedConfig() {
