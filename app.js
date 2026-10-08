@@ -47,11 +47,14 @@ try {
 const runtimeCacheKey = window.coinRuntimeKey || 'btc-monitor-runtime-local-v1';
 try {
   const cached = Number(localStorage.getItem(runtimeCacheKey));
-  if (Number.isFinite(cached) && cached > totalRuntimeMs) totalRuntimeMs = cached;
+  if (!window.coinServer && Number.isFinite(cached) && cached > totalRuntimeMs) totalRuntimeMs = cached;
 } catch {}
 let runtimeLastTick = performance.now();
 let runtimeWasEnabled = autoEnabled;
 function updateRuntime(now = performance.now()) {
+  if (window.coinServer) {
+    return totalRuntimeMs;
+  }
   const elapsed = now - runtimeLastTick;
   // Large heartbeat gaps indicate a suspended tab or sleeping computer.
   if (runtimeWasEnabled && elapsed >= 0 && elapsed <= 10000) totalRuntimeMs += elapsed;
@@ -67,6 +70,7 @@ function formatRuntime(milliseconds) {
   return (days ? days + ' ngày ' : '') + clock;
 }
 function persistSession() {
+  if (window.coinServer) return;
   updateRuntime();
   storage.setItem(SESSION_KEY, JSON.stringify({enabled:autoEnabled,lastDecision,quantity:autoQuantity,entryPrice,totalRuntimeMs}));
 }
@@ -146,6 +150,7 @@ connectionInfo.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeConnectionInfo();
 });
 function persist() {
+  if (window.coinServer) return;
   try {
     storage.setItem(KEY, JSON.stringify(wallet));
     storage.setItem(RULE_KEY, JSON.stringify(rule));
@@ -175,8 +180,7 @@ function render() {
   renderConnection();
 }
 function renderConnection() {
-  updateRuntime();
-  el('job-runtime').textContent = formatRuntime(totalRuntimeMs);
+  el('job-runtime').textContent = formatRuntime(updateRuntime());
   const fresh = isFresh();
   el('connection').textContent = fresh ? streamFresh() ? 'Đã kết nối · Real-time' : 'Đã kết nối · dự phòng 5 giây' : loading ? 'Đang kết nối…' : 'Mất kết nối · đang thử lại';
   el('connection').className = fresh ? 'positive' : 'negative';
@@ -184,7 +188,9 @@ function renderConnection() {
   el('auto-enabled').checked = autoEnabled;
   el('stop-strategy').disabled = !autoEnabled;
   el('resume-strategy').disabled = autoEnabled || !rule;
-  el('bot-state').textContent = autoEnabled ? fresh ? 'Đang chạy' : 'Chờ kết nối' : 'Đã dừng';
+  const serverFresh = window.coinServer && Date.now() - (window.coinServer.worker?.lastTickAt || 0) < 30000;
+  const executionFresh = window.coinServer ? serverFresh : fresh;
+  el('bot-state').textContent = autoEnabled ? window.coinServer ? serverFresh ? 'Server đang chạy' : 'Chờ server' : fresh ? 'Đang chạy' : 'Chờ kết nối' : 'Đã dừng';
   el('bot-state').className = autoEnabled ? 'badge' : 'badge bot-stopped';
   el('bot-setup').hidden = autoEnabled;
   el('strategy-detail').hidden = autoEnabled;
@@ -195,7 +201,7 @@ function renderConnection() {
   el('signal-status').hidden = !autoEnabled;
   if (autoEnabled && rule) renderAppliedConfig();
   el('active-strategy').textContent = rule ? (autoEnabled ? 'Đang chạy: ' : 'Đã áp dụng · đang tắt: ') + (strategies[rule.mode]?.name || rule.mode) : 'Chưa áp dụng chiến lược';
-  el('auto-status').textContent = !autoEnabled ? 'Tự động đang tắt.' : !fresh ? 'Tạm chờ giá mới và kết nối.' : autoQuantity > 0 ? 'Đang giữ ' + autoQuantity.toFixed(8) + ' BTC · Chốt lời: ' + money(entryPrice * (1 + rule.takeProfit / 100)) + ' · Cắt lỗ: ' + money(entryPrice * (1 - rule.stopLoss / 100)) + ' USDT.' : 'Đang chạy · chờ tín hiệu mua.';
+  el('auto-status').textContent = !autoEnabled ? 'Tự động đang tắt.' : !executionFresh ? window.coinServer ? 'Chưa nhận heartbeat server mới. Kiểm tra Render và kết nối.' : 'Tạm chờ giá mới và kết nối.' : autoQuantity > 0 ? 'Đang giữ ' + autoQuantity.toFixed(8) + ' BTC · Chốt lời: ' + money(entryPrice * (1 + rule.takeProfit / 100)) + ' · Cắt lỗ: ' + money(entryPrice * (1 - rule.stopLoss / 100)) + ' USDT.' : 'Đang chạy · chờ tín hiệu mua.';
   renderStrategyMonitor();
 }
 function renderAppliedConfig() {
@@ -213,10 +219,11 @@ function strategySnapshot() {
   const average = values => sum(values)/values.length;
   const closes = strategyCandles.map(c => c.close);
   const candlesReady = closes.length >= 31 && Date.now() - candleFetchedAt < 90000;
-  const checks = [{ label: 'Giá trực tiếp còn mới', met: isFresh() }];
+  const currentPrice = window.coinServer ? window.coinServer.worker?.price ?? null : price;
+  const checks = [{ label: window.coinServer ? 'Heartbeat và giá server còn mới' : 'Giá trực tiếp còn mới', met: window.coinServer ? Date.now() - (window.coinServer.worker?.lastTickAt || 0) < 30000 && currentPrice !== null : isFresh() }];
   let buyTarget = null, buyText = '', signal = false;
   if (rule.mode === 'threshold') {
-    buyTarget = rule.buy; signal = price !== null && price <= rule.buy;
+    buyTarget = rule.buy; signal = currentPrice !== null && currentPrice <= rule.buy;
     buyText = 'Mua khi giá trực tiếp ≤ ' + money(buyTarget) + ' USDT.';
     checks.push({label: 'Giá ≤ ngưỡng mua ' + money(rule.buy) + ' USDT', met: signal});
   } else {
@@ -246,11 +253,11 @@ function strategySnapshot() {
     } else buyText='Chờ tải đủ nến mới để tính mức mua.';
   }
   checks.push({label:'USDT đủ vốn và phí: ' + money(rule.amount*(1+FEE)),met:wallet.cash>=rule.amount*(1+FEE)});
-  const entry=autoQuantity>0?entryPrice:price;
+  const entry=autoQuantity>0?entryPrice:currentPrice;
   const target=entry===null?null:entry*(1+rule.takeProfit/100);
   const stop=entry===null?null:entry*(1-rule.stopLoss/100);
   const sellTarget=rule.mode==='threshold'&&target!==null?Math.min(rule.sell,target):target;
-  return {checks,buyTarget,buyText,signal,sellTarget,stop,percent:Math.round(checks.filter(c=>c.met).length/checks.length*100)};
+  return {checks,buyTarget,buyText,signal,sellTarget,stop,currentPrice,percent:Math.round(checks.filter(c=>c.met).length/checks.length*100)};
 }
 function renderStrategyMonitor() {
   const panel=el('strategy-monitor');
@@ -269,19 +276,19 @@ function renderStrategyMonitor() {
   if(autoQuantity>0){
     add('p','Đã mua tại '+money(entryPrice)+' USDT · Giữ '+autoQuantity.toFixed(8)+' BTC.');
     add('p','Bán toàn bộ khi giá ≥ '+money(snapshot.sellTarget)+' USDT hoặc ≤ '+money(snapshot.stop)+' USDT.');
-    const gain=(price/entryPrice-1)*100;
-    add('p',price===null?'Chờ giá mới.':'Biến động từ giá mua: '+money(gain)+'% · Chốt lời '+rule.takeProfit+'% / Cắt lỗ '+rule.stopLoss+'% (chưa trừ phí).');
+    const gain=(snapshot.currentPrice/entryPrice-1)*100;
+    add('p',snapshot.currentPrice===null?'Chờ giá mới.':'Biến động từ giá mua: '+money(gain)+'% · Chốt lời '+rule.takeProfit+'% / Cắt lỗ '+rule.stopLoss+'% (chưa trừ phí).');
   }else{
     add('p','Điều kiện mua đã đạt: '+snapshot.percent+'% · '+snapshot.checks.filter(c=>c.met).length+'/'+snapshot.checks.length+' điều kiện.', 'signal-progress');
     const progress=add('progress','');progress.max=100;progress.value=snapshot.percent;progress.setAttribute('aria-label','Tỷ lệ điều kiện mua đã đạt');
     for(const check of snapshot.checks)add('p',(check.met?'Đạt · ':'Chờ · ')+check.label,check.met?'positive':'negative');
     add('p',snapshot.buyText);
-    add('p','Vốn mua: '+money(rule.amount)+' USDT + phí '+money(rule.amount*FEE)+' USDT'+(price!==null?' · Khoảng '+(rule.amount/price).toFixed(8)+' BTC theo giá hiện tại.':'.'));
-    if(snapshot.sellTarget!==null)add('p','Nếu mua tại giá hiện tại '+money(price)+' USDT: bán khi ≥ '+money(snapshot.sellTarget)+' hoặc cắt lỗ khi ≤ '+money(snapshot.stop)+' USDT. Mức bán chính thức tính lại theo giá khớp mua.');
+    add('p','Vốn mua: '+money(rule.amount)+' USDT + phí '+money(rule.amount*FEE)+' USDT'+(snapshot.currentPrice!==null?' · Khoảng '+(rule.amount/snapshot.currentPrice).toFixed(8)+' BTC theo giá hiện tại.':'.'));
+    if(snapshot.sellTarget!==null)add('p','Nếu mua tại giá hiện tại '+money(snapshot.currentPrice)+' USDT: bán khi ≥ '+money(snapshot.sellTarget)+' hoặc cắt lỗ khi ≤ '+money(snapshot.stop)+' USDT. Mức bán chính thức tính lại theo giá khớp mua.');
     add('p','Phần trăm là số điều kiện đã đạt, không phải xác suất thắng. Mức giá cho nến kế tiếp chỉ là điều kiện dự kiến, không phải lệnh chờ.', 'fee');
   }
   if(!autoEnabled)add('p','Bot đang tắt: không tự mua hoặc bán.', 'negative');
-  else if(!isFresh())add('p','Tạm dừng giao dịch vì giá cũ hoặc mất kết nối.', 'negative');
+  else if(!isFresh())add('p',window.coinServer ? 'Giá trên giao diện chưa mới. Trạng thái thực thi theo heartbeat của server.' : 'Tạm dừng giao dịch vì giá cũ hoặc mất kết nối.', 'negative');
 }
 async function getJSON(path) {
   const response = await fetch(API + path, { signal: AbortSignal.timeout(8000), cache: 'no-store' });
@@ -438,6 +445,7 @@ function executeTrade(side, amount, origin = 'manual', sellQuantity = null) {
   persist(); return true;
 }
 function runAutomation() {
+  if (window.coinServer) return;
   if (!autoEnabled || !rule || !isFresh()) return;
   const previousDecision = lastDecision;
   let success = true;
@@ -496,6 +504,7 @@ const runtimeDisplay = document.createElement('div'); runtimeDisplay.className =
 const runtimeLabel = document.createElement('span'); runtimeLabel.textContent = 'Tổng thời gian job đã chạy';
 const runtimeValue = document.createElement('strong'); runtimeValue.id = 'job-runtime'; runtimeValue.textContent = '00:00:00';
 runtimeDisplay.title = 'Cộng dồn khi bot được bật và trang đang hoạt động; không tính thời gian đóng trang hoặc bị treo/ngủ.';
+if (window.coinServer) runtimeDisplay.title = 'Thời gian worker trên server chạy chiến lược, kể cả khi bạn đóng trang. Không cộng khoảng mất heartbeat dài.';
 runtimeDisplay.append(runtimeLabel, runtimeValue);
 const strategyMonitor = document.createElement('section'); strategyMonitor.id = 'strategy-monitor'; strategyMonitor.className = 'strategy-monitor';
 const botSetup = document.createElement('div'); botSetup.id = 'bot-setup';
@@ -511,12 +520,13 @@ document.querySelector('.strategy').hidden = true;
 el('strategy-form').querySelector('button[type="submit"]').textContent = 'Áp dụng và chạy';
 el('strategy-mode').parentElement.hidden = false;
 el('strategy-mode').addEventListener('change', showStrategyFields);
-el('strategy-form').addEventListener('submit', event => {
+el('strategy-form').addEventListener('submit', async event => {
   event.preventDefault();
   const buy = Number(el('buy-below').value), sell = Number(el('sell-above').value), amount = Number(el('auto-amount').value);
   const mode = el('strategy-mode').value, takeProfit = Number(el('take-profit').value), stopLoss = Number(el('stop-loss').value);
   if (autoQuantity > 0) { el('auto-status').textContent = 'Đóng vị thế hiện tại trước khi đổi chiến lược.'; return; }
   if (![amount,takeProfit,stopLoss].every(Number.isFinite) || amount < 1 || takeProfit < 0.1 || takeProfit > 100 || stopLoss < 0.1 || stopLoss >= 100 || (mode === 'threshold' && (!Number.isFinite(buy) || !Number.isFinite(sell) || buy <= 0 || sell <= buy))) { el('auto-status').textContent = 'Kiểm tra vốn, chốt lời, cắt lỗ và ngưỡng giá.'; return; }
+  if (window.coinServer) { await commandServer('start', { rule: {buy,sell,amount,mode,takeProfit,stopLoss} }); return; }
   rule = { buy, sell, amount, mode, takeProfit, stopLoss }; autoEnabled = true; lastDecision = 0;
   el('message').textContent = '';
   persist();
@@ -528,24 +538,51 @@ el('auto-enabled').addEventListener('change', () => {
   persist();
   renderConnection();
 });
-el('stop-strategy').addEventListener('click', () => {
+el('stop-strategy').addEventListener('click', async () => {
+  if (window.coinServer) { await commandServer('stop'); return; }
   autoEnabled = false;
   persist();
   el('message').textContent = autoQuantity > 0 ? 'Đã dừng chiến lược. BTC đang giữ chưa bán; chốt lời/cắt lỗ tự động cũng đã dừng.' : 'Đã dừng chiến lược. Không đặt thêm lệnh tự động.';
   renderConnection();
 });
-el('resume-strategy').addEventListener('click', () => {
+el('resume-strategy').addEventListener('click', async () => {
   if (!rule) return;
+  if (window.coinServer) { await commandServer('resume'); return; }
   autoEnabled = true;
   persist();
   el('message').textContent = 'Đã chạy lại ' + strategies[rule.mode].name + '.';
   renderConnection();
 });
-el('reset').addEventListener('click', () => {
+el('reset').addEventListener('click', async () => {
   if (!window.confirm('Đặt lại ví về 10.000 USDT và xóa lịch sử mô phỏng?')) return;
+  if (window.coinServer) { await commandServer('reset'); return; }
   wallet = fresh(); autoQuantity = 0; autoEnabled = false; el('message').textContent = 'Đã đặt lại ví mô phỏng.'; persist(); render();
 });
 window.addEventListener('resize', draw);
+let serverCommandPending = false;
+async function commandServer(command, body = {}) {
+  if (serverCommandPending) return;
+  serverCommandPending = true;
+  el('message').textContent = 'Đang gửi lệnh tới bot server…';
+  try {
+    await window.coinServer.command(command, body);
+    el('message').textContent = command === 'stop' ? 'Đã dừng bot trên server. BTC hiện có được giữ lại.' : 'Server đã nhận lệnh.';
+  } catch (error) { el('message').textContent = error.message; }
+  finally { serverCommandPending = false; renderConnection(); }
+}
+window.addEventListener('coin-server-state', () => {
+  try {
+    const savedWallet = JSON.parse(storage.getItem(KEY));
+    const savedRule = JSON.parse(storage.getItem(RULE_KEY));
+    const session = JSON.parse(storage.getItem(SESSION_KEY));
+    if (savedWallet) wallet = savedWallet;
+    rule = savedRule;
+    autoEnabled = session?.enabled === true;
+    autoQuantity = session?.quantity || 0; entryPrice = session?.entryPrice || 0;
+    totalRuntimeMs = session?.totalRuntimeMs || 0; lastDecision = session?.lastDecision || 0;
+    render();
+  } catch { el('message').textContent = 'Không đọc được trạng thái bot server.'; }
+});
 window.addEventListener('coin-storage-error', () => {
   autoEnabled = false;
   el('message').textContent = 'Không lưu được dữ liệu tài khoản. Bot đã dừng; giữ trang mở và thử kết nối lại.';
@@ -572,3 +609,6 @@ loadHistory();
 loadStrategyCandles();
 setInterval(loadStrategyCandles, 30000);
 setInterval(() => { if (historyEnd === null && !historyBusy) loadHistory(); }, 60000);
+if (window.coinServer) {
+  document.querySelector('.strategy > .fee').textContent = 'Bot chạy trên server Render · Đóng trang hoặc đăng xuất không dừng bot · Dùng nút Dừng chiến lược để dừng.';
+}

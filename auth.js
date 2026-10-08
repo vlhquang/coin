@@ -18,7 +18,30 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
     await authSDK.setPersistence(auth, authSDK.browserLocalPersistence);
     let started = false, writeQueue = Promise.resolve(), saveTimer = null;
     let store = null, accountRef = null, failed = false;
+    const serverURL = window.BTC_SERVER_URL?.replace(/\/$/, '');
+    let serverWorker = null;
+    async function serverRequest(path, body) {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch(serverURL + '/api/btc-bot/' + path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { Authorization: 'Bearer ' + token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(60000), cache: 'no-store'
+      });
+      if (!response.ok) {
+        let message = 'Bot server chưa sẵn sàng. Kiểm tra triển khai và cấu hình Render.';
+        try { message = (await response.json()).error || message; } catch {}
+        throw new Error(message);
+      }
+      return response.json();
+    }
+    function acceptServerState(result) {
+      store = result.state || {}; serverWorker = result.worker;
+      if (window.coinServer) window.coinServer.worker = serverWorker;
+      window.dispatchEvent(new Event('coin-server-state'));
+    }
     function save() {
+      if (serverURL) return;
       if (!store || !accountRef) return;
       const state = { ...store };
       el('sync-status').textContent = 'Đang lưu…';
@@ -38,9 +61,11 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
     });
     el('logout').addEventListener('click', async () => {
       el('logout').disabled = true;
-      el('stop-strategy').click();
-      clearTimeout(saveTimer); save(); await writeQueue;
-      if (failed) { el('logout').disabled = false; return; }
+      if (!serverURL) {
+        el('stop-strategy').click();
+        clearTimeout(saveTimer); save(); await writeQueue;
+        if (failed) { el('logout').disabled = false; return; }
+      }
       try { await authSDK.signOut(auth); location.reload(); }
       catch { el('sync-status').textContent = 'Đăng xuất thất bại. Hãy thử lại.'; el('logout').disabled = false; }
     });
@@ -54,12 +79,26 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
       el('auth-message').textContent = 'Đang tải dữ liệu riêng của bạn…';
       try {
         accountRef = dbSDK.doc(db, 'users', user.uid, 'private', 'portfolio');
-        const snapshot = await dbSDK.getDocFromServer(accountRef);
-        store = snapshot.exists() ? snapshot.data().state || {} : {};
+        if (serverURL) {
+          const result = await serverRequest('state');
+          store = result.state || {}; serverWorker = result.worker;
+          window.coinServer = {
+            worker: serverWorker,
+            command: async (command, body = {}) => {
+              const result = await serverRequest(command, body); acceptServerState(result);
+              return result;
+            }
+          };
+        } else {
+          const snapshot = await dbSDK.getDocFromServer(accountRef);
+          store = snapshot.exists() ? snapshot.data().state || {} : {};
+          if (snapshot.data()?.serverManaged) throw new Error('Tài khoản đã chuyển sang bot server. Cần cấu hình BTC_SERVER_URL.');
+        }
         window.coinRuntimeKey = 'btc-monitor-runtime-' + user.uid;
         window.coinStore = {
           getItem: key => store[key] ?? null,
           setItem: (key, value) => {
+            if (serverURL) return;
             store[key] = value; failed = false;
             el('sync-status').textContent = 'Đang lưu…';
             clearTimeout(saveTimer); saveTimer = setTimeout(save, 100);
@@ -68,12 +107,18 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
         window.coinFlush = () => { clearTimeout(saveTimer); save(); };
         started = true;
         const script = document.createElement('script'); script.src = 'app.js';
-        script.onload = () => { gate.hidden = true; el('dashboard').hidden = false; window.dispatchEvent(new Event('resize')); };
+        script.onload = () => {
+          gate.hidden = true; el('dashboard').hidden = false; window.dispatchEvent(new Event('resize'));
+          if (serverURL) dbSDK.onSnapshot(accountRef, snapshot => {
+            if (snapshot.exists() && snapshot.data().serverManaged === true) acceptServerState(snapshot.data());
+            el('sync-status').textContent = snapshot.metadata.fromCache ? 'Dữ liệu lưu tạm · chờ kết nối' : 'Đồng bộ bot server';
+          }, () => { el('sync-status').textContent = 'Mất đồng bộ bot server'; });
+        };
         script.onerror = () => { el('auth-message').textContent = 'Không tải được ứng dụng. Hãy tải lại trang.'; };
         el('account-name').textContent = user.email || user.displayName;
         el('sync-status').textContent = 'Đã tải dữ liệu'; el('account-bar').hidden = false;
         document.body.append(script);
-      } catch { el('auth-message').textContent = 'Không đọc được dữ liệu tài khoản. Kiểm tra Firestore và quyền truy cập; dữ liệu chưa bị thay đổi.'; }
+      } catch (error) { el('auth-message').textContent = error.message || 'Không đọc được dữ liệu tài khoản. Kiểm tra Firestore và quyền truy cập.'; }
     });
   } catch { el('auth-message').textContent = 'Không tải được dịch vụ đăng nhập. Kiểm tra kết nối rồi tải lại trang.'; }
 }

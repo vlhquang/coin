@@ -2,7 +2,7 @@
 
 Bước 3: giá BTC/USDT thật từ Binance và quy tắc giao dịch tự động mô phỏng trên thiết bị.
 
-Google đăng nhập và lưu dữ liệu tài khoản: làm theo `FIREBASE-SETUP.md`, sau đó mở qua GitHub Pages hoặc localhost. Mở file trực tiếp không hỗ trợ Google đăng nhập. Khi chưa cấu hình Firebase, dữ liệu tài khoản bị khóa.
+Google đăng nhập và lưu dữ liệu tài khoản: làm theo `FIREBASE-SETUP.md`, sau đó mở qua GitHub Pages hoặc localhost. Mở file trực tiếp không hỗ trợ Google đăng nhập. Bot server được cấu hình tại `https://vlhquang.onrender.com/api/btc-bot`; cần triển khai và bật worker theo `/Users/quangvlh/work/karaoke-portal/karaoke/docs/btc-bot-render.md` trước khi dùng. Khi chưa cấu hình Firebase hoặc server chưa sẵn sàng, dữ liệu tài khoản bị khóa.
 
 - Giá BTC nhận qua luồng aggTrade Binance và biểu đồ nhận nến WebSocket (1m/15m/1h/4h), gộp vẽ tối đa 4 lần/giây. Không cần API key.
 - Tự nối lại WebSocket sau 3 giây khi ngắt; nếu không nhận giá trực tiếp mới, REST dự phòng cập nhật giá và lịch sử mỗi 5 giây. Header phân biệt real-time và dự phòng.
@@ -20,7 +20,7 @@ Google đăng nhập và lưu dữ liệu tài khoản: làm theo `FIREBASE-SETU
 
 ## Quy tắc tự động
 
-Tổng thời gian job đã chạy hiển thị trong phần Bot và cộng dồn qua các lần bật/tắt, refresh, đổi chiến lược. Tính thời gian bot được bật và trang hoạt động, kể cả lúc chờ tín hiệu/kết nối; không tính lúc tắt hoặc khoảng trình duyệt bị đình chỉ trên 10 giây. Đồng bộ Firebase mỗi 15 giây và khi đổi trạng thái, đồng thời lưu bộ đếm riêng theo tài khoản trên thiết bị để khôi phục sau refresh. Đóng tab đột ngột có thể khiến thiết bị khác chưa nhận vài giây cuối; ghi khi đóng trang chỉ là best effort. Tổng thời gian cũ trước khi có bộ đếm không thể truy dựng, bắt đầu từ 0. Đặt lại ví không xóa tổng thời gian job.
+Tổng thời gian job cộng dồn qua các lần bật/tắt, refresh và đổi chiến lược. Ở chế độ server, worker tính và lưu thời gian giữa các heartbeat, không cộng khoảng mất heartbeat từ 30 giây trở lên. Tổng thời gian cũ trước khi có bộ đếm không thể truy dựng, bắt đầu từ 0. Đặt lại ví không xóa tổng thời gian job. Chế độ browser cũ lưu thời gian trên thiết bị/Firebase khi trang hoạt động.
 
 Phần Bot dùng hai trạng thái: khi tắt hiển thị select chiến lược, mô tả và cấu hình; khi chạy ẩn phần chỉnh sửa và hiển thị cấu hình đã áp dụng cùng điều kiện theo dõi. Dừng khôi phục giao diện chọn/cấu hình. Vốn, phần trăm tiến độ và các mức giá trong điều kiện được làm nổi bật.
 
@@ -32,7 +32,7 @@ Danh sách bốn chiến lược cho phép bấm xem mô tả, điều kiện v�
 
 Chiến lược mới: SMA 10/30 giao cắt lên, đóng nến vượt đỉnh 20 nến trước, hoặc hồi tăng sau khi nến trước thấp hơn SMA20 ít nhất 1,5%. Dữ liệu tín hiệu là nến 15 phút đã đóng, tải riêng mỗi 30 giây, độc lập biểu đồ. Mỗi nến chỉ xét mua một lần. Đây là quy tắc thử nghiệm, chưa được backtest hoặc xác nhận lợi nhuận.
 
-Chọn chiến lược, vốn mỗi lệnh, chốt lời và cắt lỗ, lưu rồi bật. Giá mới mỗi 5 giây quyết định thoát vị thế. Các tỷ lệ chốt lời/cắt lỗ tính từ giá mua, chưa khấu trừ phí. Tắt dừng mọi lệnh tự động và giữ vị thế; bật lại tiếp tục quản lý. Không đổi cấu hình khi còn vị thế tự động. Không có tiến trình nền: đóng trang sẽ dừng bot.
+Chọn chiến lược, vốn mỗi lệnh, chốt lời và cắt lỗ rồi áp dụng. Giá mới mỗi 5 giây quyết định thoát vị thế. Các tỷ lệ chốt lời/cắt lỗ tính từ giá mua, chưa khấu trừ phí. Tắt dừng mọi lệnh tự động và giữ vị thế; bật lại tiếp tục quản lý. Không đổi cấu hình khi còn vị thế tự động. Trong chế độ server, đóng trang hoặc đăng xuất không dừng bot. Render phải là instance luôn chạy để hoạt động 24/7.
 
 Nhập ngưỡng mua, ngưỡng bán (lớn hơn ngưỡng mua) và giá trị mua USDT. Lưu quy tắc, sau đó bật tự động. Bot đánh giá quy tắc ở lần nhận giá mới tiếp theo.
 
@@ -40,8 +40,8 @@ Nhập ngưỡng mua, ngưỡng bán (lớn hơn ngưỡng mua) và giá trị m
 - Không mua lặp khi đang giữ vị thế tự động; không bán BTC thủ công ngoài vị thế này.
 - Nếu bán thủ công làm giảm số BTC còn lại, vị thế tự động giảm tương ứng.
 - Thiếu số dư sẽ dừng tự động; mất kết nối hoặc giá cũ sẽ tạm chờ.
-- Quy tắc và vị thế được giữ qua tải lại trang; tự động luôn tắt sau khi tải lại.
-- Chỉ hoạt động khi trang đang mở. Trình duyệt có thể giảm tần suất cập nhật khi chạy nền.
+- Quy tắc, vị thế và trạng thái chạy được khôi phục qua tải lại trang. Lần chuyển từ browser sang server cần áp dụng chiến lược để bắt đầu job server.
+- Server là nơi duy nhất thực hiện giao dịch mô phỏng và ghi dữ liệu khi `BTC_SERVER_URL` đã cấu hình. Mở nhiều tab không tạo thêm bot.
 - Lịch sử ghi rõ nguồn lệnh thủ công hoặc tự động.
 
 Phần nguồn dữ liệu hiển thị sàn, cặp giao dịch, loại giá và đường dẫn API công khai. Chưa có lệnh thật.
