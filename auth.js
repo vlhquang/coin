@@ -2,6 +2,19 @@ const el = id => document.getElementById(id);
 const gate = el('auth-screen');
 gate.hidden = false;
 const config = window.FIREBASE_CONFIG;
+const diagnosticEntries = [];
+window.coinDiagnostic = (source, detail, level = 'info') => {
+  const entry = new Date().toLocaleTimeString('vi-VN') + ' · ' + source + ' · ' + detail;
+  diagnosticEntries.unshift(entry);
+  diagnosticEntries.length = Math.min(diagnosticEntries.length, 30);
+  const list = el('diagnostic-log');
+  if (list) list.replaceChildren(...diagnosticEntries.map(text => {
+    const item = document.createElement('li'); item.textContent = text; return item;
+  }));
+  console[level === 'error' ? 'error' : 'info']('[BTC Monitor]', source, detail);
+};
+window.addEventListener('error', event => window.coinDiagnostic('Ứng dụng', event.message || 'Lỗi JavaScript', 'error'));
+window.addEventListener('unhandledrejection', () => window.coinDiagnostic('Ứng dụng', 'Tác vụ bất đồng bộ thất bại', 'error'));
 if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
   el('google-login').disabled = true;
   el('auth-message').textContent = 'Chưa cấu hình Google đăng nhập. Cần cấu hình Firebase trước khi mở dữ liệu tài khoản.';
@@ -20,20 +33,40 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
     let store = null, accountRef = null, failed = false;
     const serverURL = window.BTC_SERVER_URL?.replace(/\/$/, '');
     let serverWorker = null;
+    let lastServerResponse = null;
+    setInterval(() => {
+      const panel = el('bot-diagnostics');
+      if (!panel) return;
+      const heartbeat = serverWorker?.lastTickAt;
+      panel.textContent = [
+        'Server: ' + (serverURL || 'Chạy trên trình duyệt'),
+        'API phản hồi gần nhất: ' + (lastServerResponse ? new Date(lastServerResponse).toLocaleString('vi-VN') : 'Chưa có'),
+        'Trạng thái worker: ' + (serverWorker?.status || 'Chưa có'),
+        'Heartbeat: ' + (heartbeat ? new Date(heartbeat).toLocaleString('vi-VN') + ' (' + Math.max(0, Math.floor((Date.now() - heartbeat) / 1000)) + ' giây trước)' : 'Chưa có'),
+        'API đồng bộ thành công không đồng nghĩa worker đang chạy. Heartbeat quá 30 giây: kiểm tra Logs của service Render.'
+      ].join('\n');
+    }, 1000);
     async function serverRequest(path, body) {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch(serverURL + '/api/btc-bot/' + path, {
+      let response;
+      try { response = await fetch(serverURL + '/api/btc-bot/' + path, {
         method: body === undefined ? 'GET' : 'POST',
         headers: { Authorization: 'Bearer ' + token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(body === undefined ? 15000 : 60000), cache: 'no-store'
-      });
+      }); } catch (error) {
+        window.coinDiagnostic('API ' + path, 'Không kết nối được: ' + (error.name || 'NetworkError'), 'error');
+        throw error;
+      }
       if (!response.ok) {
+        window.coinDiagnostic('API ' + path, 'HTTP ' + response.status, 'error');
         let message = 'Bot server chưa sẵn sàng. Kiểm tra triển khai và cấu hình Render.';
         try { message = (await response.json()).error || message; } catch {}
         throw new Error(message);
       }
-      return response.json();
+      const result = await response.json();
+      lastServerResponse = Date.now();
+      return result;
     }
     function acceptServerState(result) {
       if ((result.worker?.lastTickAt || 0) < (serverWorker?.lastTickAt || 0)) return;
@@ -84,6 +117,7 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
           let result;
           try { result = await serverRequest('state'); }
           catch {
+            window.coinDiagnostic('Khởi động', 'API bot lỗi; đang tải dữ liệu riêng từ Firestore', 'error');
             const snapshot = await dbSDK.getDocFromServer(accountRef);
             result = snapshot.exists() ? snapshot.data() : { state: {} };
           }
@@ -118,7 +152,10 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
           if (serverURL) dbSDK.onSnapshot(accountRef, snapshot => {
             if (!snapshot.metadata.fromCache && snapshot.exists() && snapshot.data().serverManaged === true) acceptServerState(snapshot.data());
             el('sync-status').textContent = snapshot.metadata.fromCache ? 'Dữ liệu lưu tạm · chờ kết nối' : 'Đồng bộ bot server';
-          }, () => { el('sync-status').textContent = 'Mất đồng bộ bot server'; });
+          }, error => {
+            el('sync-status').textContent = 'Mất đồng bộ bot server';
+            window.coinDiagnostic('Firestore', 'Đồng bộ thất bại: ' + (error.code || 'unknown'), 'error');
+          });
           if (serverURL) {
             let polling = false;
             async function refreshServer() {
