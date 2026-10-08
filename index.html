@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BTC Monitor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23178261'/%3E%3Ctext x='7' y='24' font-size='24' fill='white'%3EB%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="brand">BTC <span>Monitor</span></div><div class="source"><div class="connection-info"><button id="connection-trigger" type="button" aria-expanded="false" aria-controls="connection-details"><span id="connection" role="status">Đang kết nối…</span></button><div id="connection-details" class="connection-tooltip"><strong>Nguồn dữ liệu giá</strong><p>Binance Spot · BTC/USDT</p><p>Giá giao dịch gần nhất · cập nhật mỗi 5 giây</p><p>Lịch sử giá và tín hiệu: nến Binance</p><a href="https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT" target="_blank" rel="noopener noreferrer">data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT</a></div></div><span>Binance · giá thị trường mỗi 5 giây</span><span id="updated">Chưa nhận được giá</span></div><span class="badge">Giao dịch mô phỏng</span></header>
+  <section id="auth-screen" class="auth-screen" hidden><h1>BTC Monitor</h1><p>Đăng nhập để xem ví và chiến lược của bạn.</p><button id="google-login" type="button">Đăng nhập bằng Google</button><p id="auth-message" role="status"></p></section>
+  <div id="account-bar" class="account-bar" hidden><span id="account-name"></span><span id="sync-status" role="status"></span><button id="logout" type="button">Đăng xuất</button></div>
+  <main id="dashboard" hidden>
+    <div class="heading"><div><p class="eyebrow">THỊ TRƯỜNG</p><h1>Bitcoin <span>BTC / USDT</span></h1></div></div>
+    <section class="metrics" aria-label="Tổng quan tài khoản">
+      <div><span>Giá BTC</span><strong id="price"></strong></div>
+      <div><span>Số dư USDT</span><strong id="cash"></strong></div>
+      <div><span>Số dư BTC</span><strong id="btc"></strong></div>
+      <div><span>Lãi / lỗ mô phỏng</span><strong id="pnl"></strong></div>
+    </section>
+    <div class="workspace">
+      <section class="market"><div class="section-title"><h2>Diễn biến giá</h2><label class="range-label" for="chart-range">Khoảng thời gian <select id="chart-range"><option value="1h">1 giờ · mốc 1 phút</option><option value="24h" selected>24 giờ · mốc 15 phút</option><option value="7d">7 ngày · mốc 1 giờ</option><option value="30d">30 ngày · mốc 4 giờ</option></select></label></div><div class="chart-navigation"><button id="chart-previous" type="button" title="Xem khoảng thời gian trước">← Trước</button><button id="chart-latest" type="button">Về hiện tại</button><span id="chart-status" role="status">Đang tải lịch sử giá…</span></div><canvas id="chart" tabindex="0" role="img" aria-label="Biểu đồ lịch sử giá BTC, dùng phím mũi tên để chọn mốc"></canvas><div id="chart-detail" aria-live="polite"></div><div class="chart-footer"><span id="low"></span><span id="high"></span></div><details class="price-history"><summary>Chi tiết lịch sử giá</summary><div class="table-wrap"><table><thead><tr><th>Thời gian (giờ địa phương)</th><th>Mở</th><th>Cao</th><th>Thấp</th><th>Đóng / hiện tại</th></tr></thead><tbody id="price-history"></tbody></table></div></details></section>
+      <aside class="bot-panel" aria-label="Theo dõi chiến lược đang chạy"><div class="section-title"><h2>Bot giao dịch</h2><span id="bot-state" class="badge">Đang tắt</span></div><div class="bot-controls"><button id="stop-strategy" type="button">■ Dừng chiến lược</button><button id="resume-strategy" type="button">▶ Chạy lại</button></div><div id="bot-live-status"></div><div id="bot-monitor-slot"></div></aside>
+    </div>
+    <section class="strategy"><div class="section-title"><h2>Chiến lược tự động · mô phỏng</h2><label class="switch"><input id="auto-enabled" type="checkbox"> Bật tự động</label></div><form id="strategy-form"><div class="rule-fields"><div><label for="strategy-mode">Chiến lược</label><select id="strategy-mode"><option value="trend">Theo xu hướng SMA 10/30</option><option value="breakout">Phá đỉnh 20 nến</option><option value="reversion">Hồi về trung bình 20 nến</option><option value="threshold">Ngưỡng giá cố định</option></select></div><div><label for="auto-amount">Vốn mỗi lệnh (USDT)</label><input id="auto-amount" type="number" min="1" step="0.01" value="100" required></div><div><label for="take-profit">Chốt lời (%)</label><input id="take-profit" type="number" min="0.1" max="100" step="0.1" value="2" required></div><div><label for="stop-loss">Cắt lỗ (%)</label><input id="stop-loss" type="number" min="0.1" max="99" step="0.1" value="1" required></div><div class="threshold-field" hidden><label for="buy-below">Mua khi giá ≤ (USDT)</label><input id="buy-below" type="number" min="0.01" step="0.01"></div><div class="threshold-field" hidden><label for="sell-above">Bán khi giá ≥ (USDT)</label><input id="sell-above" type="number" min="0.01" step="0.01"></div><button type="submit" class="save-rule">Lưu chiến lược</button></div></form><p id="auto-status" role="status" aria-live="polite"></p><p id="signal-status" class="fee">Đang tải nến chiến lược…</p><p class="fee">Nến 15 phút · Một vị thế mỗi lần · Tắt bot dừng cả mua và bán tự động, giữ BTC hiện có · Chạy khi trang mở · Các chiến lược chưa được kiểm thử lợi nhuận.</p></section>
+    <p id="message" role="status" aria-live="polite"></p>
+    <section class="history"><div class="section-title"><h2>Lịch sử giao dịch</h2><button id="reset" class="reset" type="button">Đặt lại ví mô phỏng</button></div><div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Lệnh</th><th>Giá BTC</th><th>Số lượng BTC</th><th>Giá trị USDT</th><th>Phí USDT</th><th>Nguồn lệnh</th><th>Chiến lược</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+    <footer>Bước 3 · Giá thị trường Binance · Ví và lệnh mô phỏng trên thiết bị này</footer>
+  </main>
+  <script src="firebase-config.js"></script>
+  <script type="module" src="auth.js"></script>
+</body>
+</html>
