@@ -56,6 +56,7 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
         accountRef = dbSDK.doc(db, 'users', user.uid, 'private', 'portfolio');
         const snapshot = await dbSDK.getDocFromServer(accountRef);
         store = snapshot.exists() ? snapshot.data().state || {} : {};
+        window.coinRuntimeKey = 'btc-monitor-runtime-' + user.uid;
         window.coinStore = {
           getItem: key => store[key] ?? null,
           setItem: (key, value) => {
@@ -64,6 +65,7 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
             clearTimeout(saveTimer); saveTimer = setTimeout(save, 100);
           }
         };
+        window.coinFlush = () => { clearTimeout(saveTimer); save(); };
         started = true;
         const script = document.createElement('script'); script.src = 'app.js';
         script.onload = () => { gate.hidden = true; el('dashboard').hidden = false; window.dispatchEvent(new Event('resize')); };

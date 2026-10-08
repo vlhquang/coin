@@ -19,6 +19,7 @@ let strategyCandles = [];
 let candleFetchedAt = 0;
 let strategyLoading = false;
 let lastDecision = 0;
+let totalRuntimeMs = 0;
 try {
   const saved = JSON.parse(storage.getItem(RULE_KEY));
   if (saved && Number.isFinite(saved.amount) && saved.amount >= 1) rule = { ...saved, mode: saved.mode || 'threshold', takeProfit: saved.takeProfit || 2, stopLoss: saved.stopLoss || 1 };
@@ -28,7 +29,7 @@ try {
   const saved = JSON.parse(storage.getItem(KEY));
   if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Number.isFinite(saved.btc) && saved.btc >= 0 && Array.isArray(saved.trades)) wallet = saved;
 } catch {}
-// Recover the outstanding automatic position, but never resume automatically on reload.
+// Recover the outstanding automatic position before restoring the saved session.
 for (const trade of wallet.trades) {
   if (trade.origin === 'auto') { autoQuantity += trade.side === 'buy' ? trade.quantity : -trade.quantity; if (trade.side === 'buy') entryPrice = trade.price; }
 }
@@ -36,12 +37,39 @@ autoQuantity = Math.max(0, Math.min(wallet.btc, autoQuantity));
 try {
   const session = JSON.parse(storage.getItem(SESSION_KEY));
   if (session && rule) {
+    if (Number.isFinite(session.totalRuntimeMs) && session.totalRuntimeMs >= 0) totalRuntimeMs = session.totalRuntimeMs;
     autoEnabled = session.enabled === true;
     lastDecision = Number.isFinite(session.lastDecision) ? session.lastDecision : 0;
     if (Number.isFinite(session.quantity) && session.quantity >= 0 && session.quantity <= wallet.btc) autoQuantity = session.quantity;
     if (Number.isFinite(session.entryPrice) && session.entryPrice > 0) entryPrice = session.entryPrice;
   }
 } catch {}
+const runtimeCacheKey = window.coinRuntimeKey || 'btc-monitor-runtime-local-v1';
+try {
+  const cached = Number(localStorage.getItem(runtimeCacheKey));
+  if (Number.isFinite(cached) && cached > totalRuntimeMs) totalRuntimeMs = cached;
+} catch {}
+let runtimeLastTick = performance.now();
+let runtimeWasEnabled = autoEnabled;
+function updateRuntime(now = performance.now()) {
+  const elapsed = now - runtimeLastTick;
+  // Large heartbeat gaps indicate a suspended tab or sleeping computer.
+  if (runtimeWasEnabled && elapsed >= 0 && elapsed <= 10000) totalRuntimeMs += elapsed;
+  runtimeLastTick = now;
+  runtimeWasEnabled = autoEnabled;
+  try { localStorage.setItem(runtimeCacheKey, String(totalRuntimeMs)); } catch {}
+  return totalRuntimeMs;
+}
+function formatRuntime(milliseconds) {
+  const seconds = Math.floor(milliseconds / 1000);
+  const days = Math.floor(seconds / 86400);
+  const clock = [Math.floor(seconds % 86400 / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
+  return (days ? days + ' ngày ' : '') + clock;
+}
+function persistSession() {
+  updateRuntime();
+  storage.setItem(SESSION_KEY, JSON.stringify({enabled:autoEnabled,lastDecision,quantity:autoQuantity,entryPrice,totalRuntimeMs}));
+}
 let price = null;
 let updatedAt = 0;
 let connected = false;
@@ -121,7 +149,7 @@ function persist() {
   try {
     storage.setItem(KEY, JSON.stringify(wallet));
     storage.setItem(RULE_KEY, JSON.stringify(rule));
-    storage.setItem(SESSION_KEY, JSON.stringify({enabled:autoEnabled,lastDecision,quantity:autoQuantity,entryPrice}));
+    persistSession();
   }
   catch { el('message').textContent = 'Không lưu được ví trên thiết bị. Ví vẫn hoạt động trong phiên này.'; }
 }
@@ -147,6 +175,8 @@ function render() {
   renderConnection();
 }
 function renderConnection() {
+  updateRuntime();
+  el('job-runtime').textContent = formatRuntime(totalRuntimeMs);
   const fresh = isFresh();
   el('connection').textContent = fresh ? streamFresh() ? 'Đã kết nối · Real-time' : 'Đã kết nối · dự phòng 5 giây' : loading ? 'Đang kết nối…' : 'Mất kết nối · đang thử lại';
   el('connection').className = fresh ? 'positive' : 'negative';
@@ -462,6 +492,11 @@ function showStrategyFields() {
 }
 const strategyDetail = document.createElement('div'); strategyDetail.id = 'strategy-detail'; strategyDetail.className = 'strategy-detail';
 const activeStrategy = document.createElement('p'); activeStrategy.id = 'active-strategy'; activeStrategy.className = 'active-strategy';
+const runtimeDisplay = document.createElement('div'); runtimeDisplay.className = 'job-runtime';
+const runtimeLabel = document.createElement('span'); runtimeLabel.textContent = 'Tổng thời gian job đã chạy';
+const runtimeValue = document.createElement('strong'); runtimeValue.id = 'job-runtime'; runtimeValue.textContent = '00:00:00';
+runtimeDisplay.title = 'Cộng dồn khi bot được bật và trang đang hoạt động; không tính thời gian đóng trang hoặc bị treo/ngủ.';
+runtimeDisplay.append(runtimeLabel, runtimeValue);
 const strategyMonitor = document.createElement('section'); strategyMonitor.id = 'strategy-monitor'; strategyMonitor.className = 'strategy-monitor';
 const botSetup = document.createElement('div'); botSetup.id = 'bot-setup';
 const appliedConfig = document.createElement('dl'); appliedConfig.id = 'applied-config'; appliedConfig.className = 'applied-config';
@@ -469,7 +504,7 @@ const selectorField = el('strategy-mode').parentElement;
 selectorField.className = 'bot-strategy-selector';
 botSetup.append(selectorField, strategyDetail, el('strategy-form'));
 el('bot-live-status').after(appliedConfig, botSetup);
-el('bot-live-status').append(activeStrategy, el('auto-status'), el('signal-status'));
+el('bot-live-status').append(activeStrategy, runtimeDisplay, el('auto-status'), el('signal-status'));
 el('bot-monitor-slot').append(strategyMonitor);
 document.querySelector('.strategy .switch').hidden = true;
 document.querySelector('.strategy').hidden = true;
@@ -519,6 +554,12 @@ window.addEventListener('coin-storage-error', () => {
 window.addEventListener('offline', () => { connected = false; renderConnection(); });
 window.addEventListener('online', () => { updatePrice(); });
 setInterval(renderConnection, 1000);
+setInterval(() => {
+  if (!autoEnabled) return;
+  try { persistSession(); }
+  catch { el('message').textContent = 'Không lưu được thời gian chạy. Bộ đếm vẫn tiếp tục trong phiên này.'; }
+}, 15000);
+window.addEventListener('pagehide', () => { try { persistSession(); window.coinFlush?.(); } catch {} });
 setInterval(() => { if (socket?.readyState === WebSocket.OPEN && !streamFresh()) socket.close(); }, 20000);
 render();
 if (rule) { el('buy-below').value = rule.buy || ''; el('sell-above').value = rule.sell || ''; el('auto-amount').value = rule.amount; el('strategy-mode').value = rule.mode; el('take-profit').value = rule.takeProfit; el('stop-loss').value = rule.stopLoss; }

@@ -20,6 +20,8 @@ Google đăng nhập và lưu dữ liệu tài khoản: làm theo `FIREBASE-SETU
 
 ## Quy tắc tự động
 
+Tổng thời gian job đã chạy hiển thị trong phần Bot và cộng dồn qua các lần bật/tắt, refresh, đổi chiến lược. Tính thời gian bot được bật và trang hoạt động, kể cả lúc chờ tín hiệu/kết nối; không tính lúc tắt hoặc khoảng trình duyệt bị đình chỉ trên 10 giây. Đồng bộ Firebase mỗi 15 giây và khi đổi trạng thái, đồng thời lưu bộ đếm riêng theo tài khoản trên thiết bị để khôi phục sau refresh. Đóng tab đột ngột có thể khiến thiết bị khác chưa nhận vài giây cuối; ghi khi đóng trang chỉ là best effort. Tổng thời gian cũ trước khi có bộ đếm không thể truy dựng, bắt đầu từ 0. Đặt lại ví không xóa tổng thời gian job.
+
 Phần Bot dùng hai trạng thái: khi tắt hiển thị select chiến lược, mô tả và cấu hình; khi chạy ẩn phần chỉnh sửa và hiển thị cấu hình đã áp dụng cùng điều kiện theo dõi. Dừng khôi phục giao diện chọn/cấu hình. Vốn, phần trăm tiến độ và các mức giá trong điều kiện được làm nổi bật.
 
 Bố cục theo dõi: biểu đồ bên trái, trạng thái/điều kiện chiến lược bên phải trên màn hình rộng; màn hình nhỏ xếp phần bot ngay dưới biểu đồ. Nút Dừng chiến lược dừng mọi lệnh tự động và giữ BTC; nút Chạy lại tiếp tục chiến lược đã áp dụng. Hai nút phản ánh trạng thái đang chạy/dừng, không phụ thuộc chiến lược đang xem bên dưới.
