@@ -29,7 +29,22 @@
     <section class="history"><div class="section-title"><h2>Lịch sử giao dịch</h2><button id="reset" class="reset" type="button">Đặt lại ví mô phỏng</button></div><div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Lệnh</th><th>Giá BTC</th><th>Số lượng BTC</th><th>Giá trị USDT</th><th>Phí USDT</th><th>Nguồn lệnh</th><th>Chiến lược</th></tr></thead><tbody id="trades"></tbody></table></div></section>
     <footer>Bước 3 · Giá thị trường Binance · Ví và lệnh mô phỏng trên thiết bị này</footer>
   </main>
-  <script src="firebase-config.js"></script>
-  <script type="module" src="auth.js"></script>
+  <script src="firebase-config.js?v=browser-20261008-2"></script>
+  <script>
+    if (location.protocol === 'file:') {
+      document.getElementById('auth-screen').hidden = false;
+      document.getElementById('google-login').disabled = true;
+      document.getElementById('auth-message').textContent = 'Không thể đăng nhập khi mở file trực tiếp. Mở trang qua localhost hoặc GitHub Pages.';
+      const link = document.createElement('a');
+      link.href = 'http://localhost:8080/';
+      link.textContent = 'Mở BTC Monitor trên localhost';
+      document.getElementById('auth-screen').append(link);
+    } else {
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.src = 'auth.js?v=browser-20261008-2';
+      document.body.append(script);
+    }
+  </script>
 </body>
 </html>
