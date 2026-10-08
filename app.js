@@ -53,7 +53,10 @@ let runtimeLastTick = performance.now();
 let runtimeWasEnabled = autoEnabled;
 function updateRuntime(now = performance.now()) {
   if (window.coinServer) {
-    return totalRuntimeMs;
+    const heartbeat = window.coinServer.worker?.lastTickAt;
+    const elapsed = Date.now() - heartbeat;
+    // Only extrapolate while the server heartbeat is still fresh.
+    return totalRuntimeMs + (autoEnabled && Number.isFinite(elapsed) && elapsed >= 0 ? Math.min(elapsed, 30000) : 0);
   }
   const elapsed = now - runtimeLastTick;
   // Large heartbeat gaps indicate a suspended tab or sleeping computer.

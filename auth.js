@@ -26,7 +26,7 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
         method: body === undefined ? 'GET' : 'POST',
         headers: { Authorization: 'Bearer ' + token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(60000), cache: 'no-store'
+        signal: AbortSignal.timeout(body === undefined ? 15000 : 60000), cache: 'no-store'
       });
       if (!response.ok) {
         let message = 'Bot server chưa sẵn sàng. Kiểm tra triển khai và cấu hình Render.';
@@ -36,6 +36,7 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
       return response.json();
     }
     function acceptServerState(result) {
+      if ((result.worker?.lastTickAt || 0) < (serverWorker?.lastTickAt || 0)) return;
       store = result.state || {}; serverWorker = result.worker;
       if (window.coinServer) window.coinServer.worker = serverWorker;
       window.dispatchEvent(new Event('coin-server-state'));
@@ -80,7 +81,12 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
       try {
         accountRef = dbSDK.doc(db, 'users', user.uid, 'private', 'portfolio');
         if (serverURL) {
-          const result = await serverRequest('state');
+          let result;
+          try { result = await serverRequest('state'); }
+          catch {
+            const snapshot = await dbSDK.getDocFromServer(accountRef);
+            result = snapshot.exists() ? snapshot.data() : { state: {} };
+          }
           store = result.state || {}; serverWorker = result.worker;
           window.coinServer = {
             worker: serverWorker,
@@ -110,9 +116,26 @@ if (!config?.apiKey || !config?.projectId || !config?.authDomain) {
         script.onload = () => {
           gate.hidden = true; el('dashboard').hidden = false; window.dispatchEvent(new Event('resize'));
           if (serverURL) dbSDK.onSnapshot(accountRef, snapshot => {
-            if (snapshot.exists() && snapshot.data().serverManaged === true) acceptServerState(snapshot.data());
+            if (!snapshot.metadata.fromCache && snapshot.exists() && snapshot.data().serverManaged === true) acceptServerState(snapshot.data());
             el('sync-status').textContent = snapshot.metadata.fromCache ? 'Dữ liệu lưu tạm · chờ kết nối' : 'Đồng bộ bot server';
           }, () => { el('sync-status').textContent = 'Mất đồng bộ bot server'; });
+          if (serverURL) {
+            let polling = false;
+            async function refreshServer() {
+              if (polling || !auth.currentUser || document.hidden) return;
+              polling = true;
+              try {
+                acceptServerState(await serverRequest('state'));
+                el('sync-status').textContent = 'Đồng bộ bot server';
+              } catch {
+                el('sync-status').textContent = 'Chưa kết nối bot server · biểu đồ vẫn hoạt động';
+              } finally { polling = false; }
+            }
+            setInterval(refreshServer, 10000);
+            document.addEventListener('visibilitychange', refreshServer);
+            window.addEventListener('online', refreshServer);
+            refreshServer();
+          }
         };
         script.onerror = () => { el('auth-message').textContent = 'Không tải được ứng dụng. Hãy tải lại trang.'; };
         el('account-name').textContent = user.email || user.displayName;
